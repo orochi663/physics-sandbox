@@ -1,3 +1,35 @@
+# Build directories
+build/
+cmake-build-*/
+
+# IDE files
+.vscode/
+.idea/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.xcodeproj
+
+# Compiled files
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Coverage and test outputs
+*.gcno
+*.gcda
+coverage.html
+
+# Doxygen output
+docs/api/
+
+# Miscellaneous
+*.log
+*.swp
+
 # Prerequisites
 *.d
 

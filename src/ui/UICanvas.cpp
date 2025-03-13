@@ -1,230 +1,131 @@
-#include "UICanvas.h"
-#include "UIScrollbar.h"
-#include "UIXYLayout.h"
+#include "ui/UICanvas.h"
+#include "ui/UILayout.h"
+#include "ui/UIManager.h"
 #include <spdlog/spdlog.h>
-#include "CanvasFactory.h"
-
+#include <algorithm>
 
 namespace ui {
 
-UICanvas::UICanvas(const std::string& styleType, int zIndex) : zIndex_(zIndex) {
-    styleType_ = styleType;
-    layout_ = std::make_unique<UIXYLayout>();
-    registerEventHandler("styleUpdate", [this](UIElement*, EventType) { onStyleUpdate(); });
-}
+    std::unique_ptr<UICanvas> UICanvas::create(const std::string& styleType, int zIndex) {
+        return std::unique_ptr<UICanvas>(new UICanvas(styleType, zIndex));
+    }
 
-void UICanvas::addChild(std::unique_ptr<UIElement> child) {
-    if (child) {
-        child->setParent(this);
-        children_.push_back(std::move(child));
-        updateLayout();
+    UICanvas::UICanvas(const std::string& styleType, int zIndex)
+        : UIElement()
+    {
+        this->styleType_ = styleType;
+        this->zIndex_ = zIndex;
+        // Optionally, you can create a default layout here.
+    }
+
+    void UICanvas::setPosition(const glm::vec2& pos) {
+        UIElement::setPosition(pos);
+    }
+
+    void UICanvas::render(IRenderer* renderer) {
+        if (!renderer || !isDirty() || !isVisible()) return;
+        UIManager::getInstance().queueForRender(this);
+    }
+
+    void UICanvas::doRender(IRenderer* renderer) {
+        if (!renderer || !isDirty() || !isVisible()) return;
+        const UITheme* theme = getEffectiveTheme();
+        if (!theme) return;
+        UIStyle style = *theme->getStyle(styleType_).get();
+        renderer->drawRect(position_, size_, style.backgroundColor);
+        for (auto& child : getMutableChildren()) {
+            if (child)
+                child->render(renderer);
+        }
         markDirty();
     }
-}
 
-void UICanvas::render(IRenderer* renderer) {
-    if (!renderer || !isVisible_ || !dirty_) return;
-
-    const UITheme* theme = getEffectiveTheme();
-    if (!theme) return;
-
-    UIStyle style = theme->getStyle(styleType_);
-    std::unordered_map<std::string, bool> states = {{"hovered", isHovered_}, {"pressed", isPressed_}};
-    UIStyle effectiveStyle = style.computeEffectiveStyle(states);
-
-    renderer->setClipRect(getPosition(), getSize());
-
-    glm::vec2 cumulativeOffset = getCumulativeScrollOffset();
-    glm::vec2 adjustedPos = getPosition() - cumulativeOffset;
-
-    if (effectiveStyle.backgroundTexture) {
-        renderer->drawTexture(adjustedPos, getSize(), effectiveStyle.backgroundTexture);
-    } else {
-        renderer->drawRect(adjustedPos, getSize(), effectiveStyle.backgroundColor);
+    bool UICanvas::handleInput(IMouseEvent* mouseEvent) {
+        if (!mouseEvent || !isVisible()) return false;
+        // Simplified input handling: pass event to children.
+        if (!getMutableChildren().empty()) {
+            for (auto it = getMutableChildren().rbegin(); it != getMutableChildren().rend(); ++it) {
+                if ((*it)->hitTest(mouseEvent->getPosition()) && (*it)->handleInput(mouseEvent))
+                    return true;
+            }
+        }
+        return UIElement::handleInput(mouseEvent);
     }
 
-    for (const auto& child : children_) {
+    bool UICanvas::handleInput(IKeyboardEvent* keyboardEvent) {
+        if (!keyboardEvent || !isVisible()) return false;
+        for (auto& child : getMutableChildren()) {
+            if (child && child->handleInput(keyboardEvent))
+                return true;
+        }
+        return UIElement::handleInput(keyboardEvent);
+    }
+
+    bool UICanvas::handleInput(ITextInputEvent* textEvent) {
+        if (!textEvent || !isVisible()) return false;
+        for (auto& child : getMutableChildren()) {
+            if (child && child->handleInput(textEvent))
+                return true;
+        }
+        return UIElement::handleInput(textEvent);
+    }
+
+    void UICanvas::onStyleUpdate() {
+        markDirty();
+    }
+
+    const std::vector<std::unique_ptr<UIElement>>& UICanvas::getChildren() const {
+        return UIElement::getChildren();
+    }
+
+    void UICanvas::addChild(std::unique_ptr<UIElement> child) {
         if (child) {
-            glm::vec2 childPos = child->getPosition() - cumulativeOffset;
-            child->setPosition(childPos);
-            child->render(renderer);
-            child->setPosition(childPos + cumulativeOffset);
-        }
-    }
-
-    for (const auto& scrollbar : scrollbars_) {
-        if (scrollbar) scrollbar->render(renderer);
-    }
-
-    renderer->resetClipRect();
-    dirty_ = false;
-}
-
-bool UICanvas::handleInput(IMouseEvent* mouseEvent) {
-    if (!mouseEvent || !isVisible_) return false;
-
-    bool handled = false;
-    glm::vec2 pos = mouseEvent->getPosition();
-
-    // Capturing phase
-    for (auto& scrollbar : scrollbars_) {
-        if (scrollbar && scrollbar->hitTest(pos)) {
-            handled = scrollbar->handleInput(mouseEvent);
-            if (handled) return true;
-        }
-    }
-
-    for (auto& child : children_) {
-        if (child && child->hitTest(pos)) {
-            handled = child->handleInput(mouseEvent);
-            if (handled) return true;
-        }
-    }
-
-    // Bubbling phase
-    bool isInside = hitTest(pos);
-
-    switch (mouseEvent->getType()) {
-        case EventType::MouseMove:
-            isHovered_ = isInside;
+            child->setParent(this);
+            getMutableChildren().push_back(std::move(child));
+            updateLayout();
             markDirty();
-            break;
-        case EventType::MousePress:
-            if (isInside && mouseEvent->getButton() == MouseButton::Left) {
-                isPressed_ = true;
-                markDirty();
-                return true;
-            }
-            break;
-        case EventType::MouseRelease:
-            if (isPressed_ && isInside && mouseEvent->getButton() == MouseButton::Left) {
-                isPressed_ = false;
-                markDirty();
-                publishEvent("click", mouseEvent->getType());
-                return true;
-            }
-            isPressed_ = false;
-            break;
-        case EventType::MouseWheel:
-            if (isInside) {
-                glm::vec2 delta = mouseEvent->getWheelDelta();
-                scrollOffset_.y -= delta.y * 10.0f;
-                updateLayout();
-                markDirty();
-                return true;
-            }
-            break;
-    }
-    return false;
-}
-
-bool UICanvas::handleInput(IKeyboardEvent* keyboardEvent) {
-    if (!keyboardEvent || !isVisible_) return false;
-
-    bool handled = false;
-    for (auto& child : children_) {
-        if (child && child->hasFocus()) {
-            handled = child->handleInput(keyboardEvent);
-            if (handled) return true;
         }
     }
 
-    for (auto& scrollbar : scrollbars_) {
-        if (scrollbar && scrollbar->hasFocus()) {
-            handled = scrollbar->handleInput(keyboardEvent);
-            if (handled) return true;
-        }
-    }
-    return false;
-}
-
-bool UICanvas::handleInput(ITextInputEvent* textEvent) {
-    if (!textEvent || !isVisible_) return false;
-
-    bool handled = false;
-    for (auto& child : children_) {
-        if (child && child->hasFocus()) {
-            handled = child->handleInput(textEvent);
-            if (handled) return true;
-        }
-    }
-    return false;
-}
-
-void UICanvas::onStyleUpdate() {
-    for (auto& child : children_) if (child) child->onStyleUpdate();
-    for (auto& scrollbar : scrollbars_) if (scrollbar) scrollbar->onStyleUpdate();
-    updateLayout();
-    markDirty();
-}
-
-void UICanvas::addChild(std::unique_ptr<UIElement> child) {
-    if (child) {
-        child->setParent(this);
-        children_.push_back(std::move(child));
+    void UICanvas::removeChild(const UIElement* child) {
+        auto& children = getMutableChildren();
+        children.erase(std::remove_if(children.begin(), children.end(),
+            [child](const std::unique_ptr<UIElement>& ptr) {
+                return ptr.get() == child;
+            }),
+            children.end());
         updateLayout();
         markDirty();
     }
-}
 
-void UICanvas::removeChild(const UIElement* child) {
-    children_.erase(
-        std::remove_if(children_.begin(), children_.end(),
-                       [child](const auto& ptr) { return ptr.get() == child; }),
-        children_.end()
-    );
-    updateLayout();
-    markDirty();
-}
+    void UICanvas::addScrollbar(std::unique_ptr<UIScrollbar> scrollbar) {
+        if (scrollbar) {
+            scrollbar->setParent(this);
+            scrollbars_.push_back(std::move(scrollbar));
+            updateLayout();
+            markDirty();
+        }
+    }
 
-const std::vector<std::unique_ptr<UIElement>>& UICanvas::getChildren() const {
-    return children_;
-}
-
-void UICanvas::addScrollbar(std::unique_ptr<UIScrollbar> scrollbar) {
-    if (scrollbar) {
-        scrollbar->attachToCanvas(this);
-        scrollbars_.push_back(std::move(scrollbar));
+    void UICanvas::setScrollOffset(float xOffset, float yOffset) {
+        scrollOffset_ = glm::vec2(xOffset, yOffset);
         markDirty();
     }
-}
 
-void UICanvas::setScrollOffset(float xOffset, float yOffset) {
-    scrollOffset_.x = xOffset;
-    scrollOffset_.y = yOffset;
-    updateLayout();
-    markDirty();
-}
-
-void UICanvas::setLayout(std::unique_ptr<UILayout> layout) {
-    layout_ = std::move(layout);
-    updateLayout();
-    markDirty();
-}
-
-void UICanvas::updateLayout() {
-    if (layout_) {
-        contentSize_ = layout_->arrange(this, children_);
-        float maxXOffset = std::max(0.0f, contentSize_.x - getSize().x);
-        float maxYOffset = std::max(0.0f, contentSize_.y - getSize().y);
-        scrollOffset_.x = std::clamp(scrollOffset_.x, 0.0f, maxXOffset);
-        scrollOffset_.y = std::clamp(scrollOffset_.y, 0.0f, maxYOffset);
-    } else {
-        contentSize_ = getSize();
+    void UICanvas::setLayout(std::unique_ptr<UILayout> layout) {
+        layout_ = std::move(layout);
+        updateLayout();
+        markDirty();
     }
-    markDirty();
-}
 
-glm::vec2 UICanvas::getCumulativeScrollOffset() const {
-    glm::vec2 offset = scrollOffset_;
-    const UIElement* current = this;
-    while (current->getParent()) {
-        if (const auto* parentCanvas = dynamic_cast<const UICanvas*>(current->getParent().value())) {
-            offset += parentCanvas->scrollOffset_;
+    void UICanvas::updateLayout() {
+        if (layout_) {
+            contentSize_ = layout_->arrange(this, getMutableChildren());
         }
-        current = current->getParent().value();
     }
-    return offset;
-}
+
+    glm::vec2 UICanvas::getCumulativeScrollOffset() const {
+        return scrollOffset_;
+    }
 
 } // namespace ui

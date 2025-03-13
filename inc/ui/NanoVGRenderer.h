@@ -1,33 +1,33 @@
 #pragma once
 #include "IRenderer.h"
-#include "UITexture.h"
-#include "UITheme.h"
+#include "ITexture.h"
 #include <nanovg.h>
-#include <memory>
-#include <optional>
+#include <glm/glm.hpp>
 #include <string>
+#include <optional>
 
 namespace ui {
 
-class NanoVGRenderer : public IRenderer {
-public:
-    explicit NanoVGRenderer(NVGcontext* ctx);
-    ~NanoVGRenderer() override = default;
+    class NanoVGRenderer : public IRenderer {
+    public:
+        explicit NanoVGRenderer(NVGcontext* ctx);
+        ~NanoVGRenderer() override = default;
 
-    void drawRect(const glm::vec2& pos, const glm::vec2& size) override;
-    void drawTexture(const glm::vec2& pos, const glm::vec2& size, std::shared_ptr<UITexture> texture) override;
-    void drawText(const glm::vec2& pos, const std::string& text, float fontSize, float fontWeight,
-                  const std::string& fontStyle, UITheme::Style::TextAlign align) override;
-    void setClipRect(const glm::vec2& pos, const glm::vec2& size) override;
-    void resetClipRect() override;
-    NVGcontext* getNVGContext() override { return ctx_; }
+        // IRenderer interface implementations
+        void drawRect(const glm::vec2& position, const glm::vec2& size, const glm::vec4& color) override;
+        void drawLine(const glm::vec2& start, const glm::vec2& end, const glm::vec4& color) override;
+        void drawText(const glm::vec2& position, const std::string& text, const glm::vec4& color, float fontSize) override;
+        void drawTexture(const glm::vec2& position, const glm::vec2& size, ITexture* texture) override;
+        glm::vec2 measureText(const std::string& text, float fontSize) override;
+        void setClipRect(const glm::vec2& position, const glm::vec2& size) override;
+        void resetClipRect() override;
+        void* getNVGContext() override;
+        glm::vec2 getScreenSize() const override;
 
-    // Compute effective style with parent hierarchy
-    UITheme::Style computeEffectiveStyle(const UIElement* element) const;
-
-private:
-    NVGcontext* ctx_;
-    std::optional<std::pair<glm::vec2, glm::vec2>> clipRect_;
-};
+    private:
+        NVGcontext* ctx_;
+        std::optional<std::pair<glm::vec2, glm::vec2>> clipRect_;
+        glm::vec2 screenSize_; // Default screen size; ideally set externally
+    };
 
 } // namespace ui

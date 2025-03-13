@@ -1,6 +1,7 @@
-#include "UITextField.h"
-#include "UICanvas.h"
+#include "ui/UITextField.h"
+#include "ui/UICanvas.h"
 #include <spdlog/spdlog.h>
+#include <source_location> // Added for C++20 std::source_location
 
 namespace ui {
 
@@ -19,6 +20,8 @@ void UITextField::setText(const std::string& text) {
     text_ = text;
     cursorPos_ = text_.length();
     markDirty();
+    // Log with source_location for automatic file/line info
+    spdlog::debug("UITextField text set to '{}' at {}", text, std::source_location::current().function_name());
 }
 
 void UITextField::render(IRenderer* renderer) {
@@ -70,6 +73,8 @@ bool UITextField::handleInput(IMouseEvent* mouseEvent) {
     bool handled = UIElement::handleInput(mouseEvent);
     if (handled && mouseEvent->getType() == EventType::MousePress && hitTest(mouseEvent->getPosition())) {
         setFocus(true);
+        // Log with source_location for better debugging context
+        spdlog::debug("UITextField gained focus at {}", std::source_location::current().function_name());
         return true;
     }
     return handled;
@@ -105,6 +110,8 @@ bool UITextField::handleInput(ITextInputEvent* textEvent) {
     text_ = text_.substr(0, cursorPos_) + textEvent->getText() + text_.substr(cursorPos_);
     cursorPos_ += textEvent->getText().length();
     markDirty();
+    // Log with source_location for detailed tracing
+    spdlog::debug("Text input '{}' added at cursor position {} in {}", textEvent->getText(), cursorPos_, std::source_location::current().function_name());
     return true;
 }
 

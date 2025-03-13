@@ -1,26 +1,26 @@
 #pragma once
-#include "UIRadioButton.h"
+#include "ui/UIRadioButton.h"
 #include <vector>
 #include <functional>
 
 namespace ui {
 
-class UIRadioButtonGroup {
-public:
-    UIRadioButtonGroup();
-    ~UIRadioButtonGroup();
+    class UIRadioButtonGroup {
+    public:
+        UIRadioButtonGroup();
+        ~UIRadioButtonGroup();
 
-    void addRadioButton(UIRadioButton* radioButton);
-    void removeRadioButton(UIRadioButton* radioButton);
-    UIRadioButton* getSelected() const { return selected_; }
-    void setOnSelectionChanged(std::function<void(UIRadioButton*)> callback) { onSelectionChanged_ = callback; }
+        void addRadioButton(UIRadioButton* radioButton);
+        void removeRadioButton(UIRadioButton* radioButton);
+        UIRadioButton* getSelected() const { return selected_; }
+        void setOnSelectionChanged(std::function<void(UIRadioButton*)> callback) { onSelectionChanged_ = std::move(callback); }
 
-private:
-    void handleRadioButtonChecked(UIElement* sender, EventType eventType);
+    private:
+        void handleRadioButtonChecked(UIElement* sender, EventType eventType);
 
-    std::vector<UIRadioButton*> radioButtons_;
-    UIRadioButton* selected_{nullptr};
-    std::function<void(UIRadioButton*)> onSelectionChanged_;
-};
+        std::vector<UIRadioButton*> radioButtons_;
+        UIRadioButton* selected_{ nullptr };
+        std::function<void(UIRadioButton*)> onSelectionChanged_;
+    };
 
 } // namespace ui

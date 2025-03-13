@@ -1,158 +1,181 @@
-#include "UIDialog.h"
-#include "UILabel.h"
-#include "UIButton.h"
-#include "CanvasFactory.h"
+#include "ui/UIDialog.h"
+#include "ui/UIButton.h"
+#include "ui/UILabel.h"
+#include "ui/UIFactory.h"
+#include "ui/UIManager.h"
+#include "ui/UIStyle.h"
 #include <spdlog/spdlog.h>
+#include <coroutine>
+#include <chrono>
 
 namespace ui {
 
-std::unique_ptr<UIDialog> UIDialog::create(
-    const std::string& title,
-    const std::string& message,
-    DialogType dialogType,
-    ButtonType buttonType,
-    const std::string& styleType,
-    int zIndex
-) {
-    return std::unique_ptr<UIDialog>(new UIDialog(title, message, dialogType, buttonType, styleType, zIndex));
-}
+    struct UIDialog::FadeTask {
+        struct promise_type {
+            FadeTask get_return_object() {
+                return FadeTask{ std::coroutine_handle<promise_type>::from_promise(*this) };
+            }
+            std::suspend_never initial_suspend() noexcept { return {}; }
+            std::suspend_always final_suspend() noexcept { return {}; }
+            void return_void() noexcept {}
+            void unhandled_exception() { spdlog::error("UIDialog FadeTask exception"); std::terminate(); }
+        };
+        std::coroutine_handle<promise_type> handle;
+        explicit FadeTask(std::coroutine_handle<promise_type> h) : handle(h) {}
+        ~FadeTask() { if (handle && !handle.done()) handle.destroy(); }
+    };
 
-UIDialog::UIDialog(const std::string& title, const std::string& message, DialogType dialogType, ButtonType buttonType, const std::string& styleType, int zIndex)
-    : UICanvas(styleType, zIndex), title_(title), message_(message), dialogType_(dialogType) {
-    isModal_ = true;
-    size_ = glm::vec2(300.0f, 150.0f);
-    position_ = glm::vec2(1280.0f / 2.0f - size_.x / 2.0f, 720.0f / 2.0f - size_.y / 2.0f); // Center on screen
-
-    titleLabel_ = std::make_unique<UILabel>(this);
-    titleLabel_->setText(title_);
-    titleLabel_->setStyleType("dialogTitle");
-    setTextAlignment(TextAlignment::Left); // Default to Left as per original design
-
-    messageLabel_ = std::make_unique<UILabel>(this);
-    messageLabel_->setText(message_);
-    messageLabel_->setStyleType("dialogMessage");
-    messageLabel_->setTextAlignment(TextAlignment::Left); // Default to Left
-
-    setupButtons(buttonType);
-    registerEventHandler("styleUpdate", [this](UIElement*, EventType) { onStyleUpdate(); });
-}
-
-void UIDialog::setupButtons(ButtonType buttonType) {
-    float buttonY = position_.y + size_.y - 40.0f;
-    float buttonSpacing = 10.0f;
-    std::vector<std::pair<std::string, DialogResult>> buttons;
-
-    switch (buttonType) {
-        case ButtonType::OK:
-            buttons = {{"OK", DialogResult::OK}};
-            break;
-        case ButtonType::OK_CANCEL:
-            buttons = {{"OK", DialogResult::OK}, {"Cancel", DialogResult::Cancel}};
-            break;
-        case ButtonType::YES_NO:
-            buttons = {{"Yes", DialogResult::Yes}, {"No", DialogResult::No}};
-            break;
-        case ButtonType::YES_NO_CANCEL:
-            buttons = {{"Yes", DialogResult::Yes}, {"No", DialogResult::No}, {"Cancel", DialogResult::Cancel}};
-            break;
-        case ButtonType::CANCEL:
-            buttons = {{"Cancel", DialogResult::Cancel}};
-            break;
+    std::unique_ptr<UIDialog> UIDialog::create(const std::string& title,
+        const std::string& message,
+        DialogType type,
+        ButtonType buttonType,
+        const std::string& styleType,
+        int zIndex)
+    {
+        return std::unique_ptr<UIDialog>(new UIDialog(title, message, type, buttonType, styleType, zIndex));
     }
 
-    float totalWidth = buttons.size() * 80.0f + (buttons.size() - 1) * buttonSpacing;
-    float startX = position_.x + (size_.x - totalWidth) / 2.0f;
+    UIDialog::UIDialog(const std::string& title,
+        const std::string& message,
+        DialogType type,
+        ButtonType buttonType,
+        const std::string& styleType,
+        int zIndex)
+        : UICanvas(styleType, zIndex), type_(type), buttonType_(buttonType), opacity_(0.0f)
+    {
+        titleLabel_ = UILabel::create(title);
+		titleLabel_->setParent(this);
+        titleLabel_->setStyleType("dialogTitle");
 
-    for (size_t i = 0; i < buttons.size(); ++i) {
-        auto& [text, result] = buttons[i];
-        auto button = CanvasFactory::createElement("button", this);
-        auto* btn = dynamic_cast<UIButton*>(button.get());
-        if (btn) {
-            btn->setPosition(glm::vec2(startX + i * (80.0f + buttonSpacing), buttonY));
-            btn->setSize(glm::vec2(80.0f, 30.0f));
-            btn->setText(text);
-            btn->setOnClick([this, result]() { close(result); });
-            addChild(std::move(button));
+        messageLabel_ = UILabel::create(message);
+        titleLabel_->setParent(this);
+        messageLabel_->setStyleType("dialogMessage");
+
+        configureButtons();
+        position_ = glm::vec2(0.0f); // Will be centered in updateLayout()
+        size_ = glm::vec2(300.0f, 200.0f);
+        updateLayout();
+        fadeIn(); // Start fade-in animation
+    }
+
+    UIDialog::~UIDialog() {
+        // Destructor logic if necessary.
+    }
+
+    UIDialog::FadeTask UIDialog::fadeIn() {
+        float fadeInTime = 0.5f; // default fade-in time
+        const UITheme* theme = getEffectiveTheme();
+        if (theme) {
+            auto stylePtr = std::dynamic_pointer_cast<UIDialogStyle>(theme->getStyle(styleType_));
+            if (stylePtr) {
+                fadeInTime = stylePtr->fadeInTime;
+            }
+        }
+        int steps = 10;
+        for (int i = 0; i <= steps; ++i) {
+            opacity_ = static_cast<float>(i) / steps;
+            markDirty();
+            if (i < steps)
+                co_await std::suspend_always{};
+        }
+        co_return;
+    }
+
+    void UIDialog::configureButtons() {
+        auto& children = getMutableChildren();
+        if (type_ == DialogType::Ok || type_ == DialogType::OkCancel) {
+            auto okButton = UIFactory::createElement("button", this);
+            UIButton* okBtn = dynamic_cast<UIButton*>(okButton.get());
+            if (okBtn) {
+                okBtn->setText("OK");
+                okBtn->setOnClick([this]() { close(); });
+            }
+            children.push_back(std::move(okButton));
+        }
+        if (type_ == DialogType::OkCancel || type_ == DialogType::YesNo) {
+            auto cancelButton = UIFactory::createElement("button", this);
+            UIButton* cancelBtn = dynamic_cast<UIButton*>(cancelButton.get());
+            if (cancelBtn) {
+                cancelBtn->setText(type_ == DialogType::OkCancel ? "Cancel" : "No");
+                cancelBtn->setOnClick([this]() { close(); });
+            }
+            children.push_back(std::move(cancelButton));
+        }
+        if (type_ == DialogType::YesNo) {
+            auto& childrenVec = getMutableChildren();
+            if (!childrenVec.empty() && childrenVec[0]) {
+                if (auto btn = dynamic_cast<UIButton*>(childrenVec[0].get())) {
+                    btn->setText("Yes");
+                }
+            }
         }
     }
-}
 
-void UIDialog::close(DialogResult result) {
-    result_ = result;
-    if (onResult_) onResult_(result_);
-    UIManager::getInstance().removeCanvas(this);
-}
+    void UIDialog::updateLayout() {
+        if (!parent_) {
+            spdlog::warn("UIDialog has no parent canvas for layout computation");
+            return;
+        }
+        glm::vec2 parentSize = parent_.value()->getSize();
+        position_ = (parentSize - size_) / 2.0f; // Center dialog
 
-void UIDialog::render(IRenderer* renderer) {
-    if (!renderer || !isVisible_ || !dirty_) return;
+        titleLabel_->setPosition(position_ + glm::vec2(10.0f, 10.0f));
+        messageLabel_->setPosition(position_ + glm::vec2(10.0f, 40.0f));
 
-    const UITheme* theme = getEffectiveTheme();
-    if (!theme) return;
-
-    UIStyle style = theme->getStyle(styleType_);
-    std::unordered_map<std::string, bool> states = {{"hovered", isHovered_}, {"pressed", isPressed_}};
-    UIStyle effectiveStyle = style.computeEffectiveStyle(states);
-
-    // Render background
-    renderer->drawRect(position_, size_, effectiveStyle.backgroundColor);
-
-    // Render title bar
-    glm::vec2 titleBarPos = position_;
-    glm::vec2 titleBarSize(size_.x, titleBarHeight_);
-    renderer->drawRect(titleBarPos, titleBarSize, effectiveStyle.backgroundColor);
-
-    // Position title label based on text alignment
-    glm::vec2 titleLabelPos = titleBarPos;
-    switch (getTextAlignment()) {
-        case TextAlignment::Left:
-            titleLabelPos.x += 5.0f;
-            break;
-        case TextAlignment::Right:
-            titleLabelPos.x += titleBarSize.x - titleLabel_->getSize().x - 5.0f;
-            break;
-        default:
-            titleLabelPos.x += 5.0f; // Default to Left
-            break;
-    }
-    titleLabel_->setPosition(titleLabelPos);
-    titleLabel_->render(renderer);
-
-    // Position message label based on its alignment
-    glm::vec2 messageLabelPos = position_ + glm::vec2(10.0f, titleBarHeight_ + 10.0f);
-    switch (messageLabel_->getTextAlignment()) {
-        case TextAlignment::Left:
-            messageLabelPos.x = position_.x + 10.0f;
-            break;
-        case TextAlignment::Right:
-            messageLabelPos.x = position_.x + size_.x - messageLabel_->getSize().x - 10.0f;
-            break;
-        case TextAlignment::Center:
-            messageLabelPos.x = position_.x + (size_.x - messageLabel_->getSize().x) / 2.0f;
-            break;
-        default:
-            messageLabelPos.x = position_.x + 10.0f; // Default to Left
-            break;
-    }
-    messageLabel_->setPosition(messageLabelPos);
-    messageLabel_->render(renderer);
-
-    // Render children (buttons)
-    for (const auto& child : children_) {
-        if (child) child->render(renderer);
+        float buttonY = position_.y + size_.y - 40.0f;
+        auto& children = getMutableChildren();
+        if (type_ == DialogType::Ok) {
+            if (!children.empty()) {
+                children[0]->setPosition(glm::vec2(position_.x + size_.x / 2.0f - 30.0f, buttonY));
+                children[0]->setSize(glm::vec2(60.0f, 30.0f));
+            }
+        }
+        else if (type_ == DialogType::OkCancel || type_ == DialogType::YesNo) {
+            if (children.size() >= 2) {
+                children[0]->setPosition(glm::vec2(position_.x + size_.x / 2.0f - 70.0f, buttonY));
+                children[0]->setSize(glm::vec2(60.0f, 30.0f));
+                children[1]->setPosition(glm::vec2(position_.x + size_.x / 2.0f + 10.0f, buttonY));
+                children[1]->setSize(glm::vec2(60.0f, 30.0f));
+            }
+        }
     }
 
-    dirty_ = false;
-}
-
-bool UIDialog::handleInput(IKeyboardEvent* keyboardEvent) {
-    if (!keyboardEvent || !isVisible_) return false;
-
-    if (keyboardEvent->getType() == EventType::KeyPress && keyboardEvent->getKeyCode() == KeyCode::Escape) {
-        close(DialogResult::Cancel);
-        return true;
+    void UIDialog::render(IRenderer* renderer) {
+        if (!renderer || !isVisible() || !isDirty()) return;
+        UIManager::getInstance().queueForRender(this);
     }
 
-    return UICanvas::handleInput(keyboardEvent);
-}
+    void UIDialog::doRender(IRenderer* renderer) {
+        if (!renderer || !isVisible() || !isDirty()) return;
+        const UITheme* theme = getEffectiveTheme();
+        if (!theme) return;
+        UIStyle style = *theme->getStyle(styleType_).get();
+        glm::vec4 fadedColor = style.backgroundColor * glm::vec4(1.0f, 1.0f, 1.0f, opacity_);
+        renderer->drawRect(position_, size_, fadedColor);
+        titleLabel_->render(renderer);
+        messageLabel_->render(renderer);
+        for (auto& child : getMutableChildren()) {
+            if (child)
+                child->render(renderer);
+        }
+        markDirty();
+    }
+
+    void UIDialog::close() {
+        setVisible(false);
+        if (onClose_) onClose_();
+    }
+
+    void UIDialog::onStyleUpdate() {
+        markDirty();
+    }
+
+    void UIDialog::registerEventHandlers() {
+        // Implement as needed.
+    }
+
+    void UIDialog::onKeyPress(UIElement* , EventType ) {
+        // Implement as needed.
+    }
 
 } // namespace ui

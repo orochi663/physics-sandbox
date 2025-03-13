@@ -24,8 +24,7 @@ class NanoVGFontRenderer : public IFontRenderer {
 public:
     explicit NanoVGFontRenderer(NVGcontext* ctx);
     ~NanoVGFontRenderer() override = default;
-
-    std::shared_ptr<IFont> loadFont(const std::string& name, const std::string& path) override;
+    std::shared_ptr<IFont> loadFont(const std::string& name, const std::filesystem::path& path) override;
     void prepareFont(IRenderer* renderer, const IFont* font) override;
     glm::vec2 getTextBounds(const IFont* font, const std::string& text) override;
 

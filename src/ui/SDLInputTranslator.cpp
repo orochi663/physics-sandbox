@@ -1,4 +1,4 @@
-#include "SDLInputTranslator.h"
+#include "ui/SDLInputTranslator.h"
 #include <spdlog/spdlog.h>
 
 namespace ui {
@@ -15,10 +15,10 @@ KeyCode SDLInputTranslator::translateKeyCode(SDL_Keycode sdlKey) {
 
 int SDLInputTranslator::translateModifiers(Uint16 sdlMod) {
     int modifiers = static_cast<int>(Modifier::None);
-    if (sdlMod & KMOD_SHIFT) modifiers |= static_cast<int>(Modifier::Shift);
-    if (sdlMod & KMOD_CTRL) modifiers |= static_cast<int>(Modifier::Ctrl);
-    if (sdlMod & KMOD_ALT) modifiers |= static_cast<int>(Modifier::Alt);
-    if (sdlMod & KMOD_GUI) modifiers |= static_cast<int>(Modifier::Super);
+    if (sdlMod & SDL_KMOD_SHIFT) modifiers |= static_cast<int>(Modifier::Shift);
+    if (sdlMod & SDL_KMOD_CTRL) modifiers |= static_cast<int>(Modifier::Ctrl);
+    if (sdlMod & SDL_KMOD_ALT) modifiers |= static_cast<int>(Modifier::Alt);
+    if (sdlMod & SDL_KMOD_GUI) modifiers |= static_cast<int>(Modifier::Super);
     return modifiers;
 }
 
@@ -43,26 +43,26 @@ std::unique_ptr<IMouseEvent> SDLInputTranslator::createMouseEvent(void* event) {
     };
 
     switch (sdlEvent->type) {
-        case SDL_MOUSEBUTTONDOWN:
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
             return std::make_unique<SDLMouseEvent>(EventType::MousePress,
                                                   glm::vec2(sdlEvent->button.x, sdlEvent->button.y),
                                                   translateMouseButton(sdlEvent->button.button));
-        case SDL_MOUSEBUTTONUP:
+        case SDL_EVENT_MOUSE_BUTTON_UP:
             return std::make_unique<SDLMouseEvent>(EventType::MouseRelease,
                                                   glm::vec2(sdlEvent->button.x, sdlEvent->button.y),
                                                   translateMouseButton(sdlEvent->button.button));
-        case SDL_MOUSEMOTION:
+        case SDL_EVENT_MOUSE_MOTION:
             return std::make_unique<SDLMouseEvent>(EventType::MouseMove,
                                                   glm::vec2(sdlEvent->motion.x, sdlEvent->motion.y),
                                                   MouseButton::Unknown);
-        case SDL_MOUSEWHEEL:
+        case SDL_EVENT_MOUSE_WHEEL:
             return std::make_unique<SDLMouseEvent>(EventType::MouseWheel,
                                                   glm::vec2(sdlEvent->wheel.x, sdlEvent->wheel.y),
                                                   MouseButton::Unknown,
                                                   glm::vec2(sdlEvent->wheel.x, sdlEvent->wheel.y));
-        case SDL_DROPFILE: {
-            std::string droppedFile(sdlEvent->drop.file);
-            SDL_free(sdlEvent->drop.file);
+        case SDL_EVENT_DROP_FILE: {
+            std::string droppedFile(sdlEvent->drop.data);
+            SDL_free((void*)sdlEvent->drop.data);
             return std::make_unique<SDLMouseEvent>(EventType::Drop,
                                                   glm::vec2(0, 0), // Position not provided by SDL_DROPFILE
                                                   MouseButton::Unknown,
@@ -90,14 +90,14 @@ std::unique_ptr<IKeyboardEvent> SDLInputTranslator::createKeyboardEvent(void* ev
         int modifiers_;
     };
 
-    if (sdlEvent->type == SDL_KEYDOWN) {
+    if (sdlEvent->type == SDL_EVENT_KEY_DOWN) {
         return std::make_unique<SDLKeyboardEvent>(EventType::KeyPress,
-                                                 translateKeyCode(sdlEvent->key.keysym.sym),
-                                                 translateModifiers(sdlEvent->key.keysym.mod));
-    } else if (sdlEvent->type == SDL_KEYUP) {
+                                                 translateKeyCode(sdlEvent->key.key),
+                                                 translateModifiers(sdlEvent->key.mod));
+    } else if (sdlEvent->type == SDL_EVENT_KEY_UP) {
         return std::make_unique<SDLKeyboardEvent>(EventType::KeyRelease,
-                                                 translateKeyCode(sdlEvent->key.keysym.sym),
-                                                 translateModifiers(sdlEvent->key.keysym.mod));
+                                                 translateKeyCode(sdlEvent->key.key),
+                                                 translateModifiers(sdlEvent->key.mod));
     }
     return nullptr;
 }
@@ -116,7 +116,7 @@ std::unique_ptr<ITextInputEvent> SDLInputTranslator::createTextInputEvent(void* 
         std::string text_;
     };
 
-    if (sdlEvent->type == SDL_TEXTINPUT) {
+    if (sdlEvent->type == SDL_EVENT_TEXT_INPUT) {
         return std::make_unique<SDLTextInputEvent>(EventType::TextInput, sdlEvent->text.text);
     }
     return nullptr;

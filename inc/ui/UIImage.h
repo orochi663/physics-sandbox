@@ -11,6 +11,8 @@ public:
     static std::unique_ptr<UIImage> create(ITexture* texture = nullptr);
     void render(IRenderer* renderer) override;
 
+    void onStyleUpdate() override;
+
 private:
     UIImage(ITexture* texture);
     std::unique_ptr<ITexture> texture_;

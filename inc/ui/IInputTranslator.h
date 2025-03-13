@@ -1,5 +1,6 @@
 #pragma once
 #include "IInputEvent.h"
+#include <memory>
 
 namespace ui {
 

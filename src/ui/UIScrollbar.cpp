@@ -1,206 +1,151 @@
-#include "UIScrollbar.h"
-#include "UICanvas.h"
+#include "ui/UIScrollbar.h"
+#include "ui/UICanvas.h"
+#include "ui/IRenderer.h"
 #include <spdlog/spdlog.h>
+#include <glm/glm.hpp>
+#include <algorithm>
+#include <nanovg.h>
 
 namespace ui {
 
-UIScrollbar::UIScrollbar(Orientation orientation, const std::string& id) : orientation_(orientation) {
-    styleType_ = orientation == Orientation::Vertical ? "scrollbar-vertical" : "scrollbar-horizontal";
-    setId(id.empty() ? styleType_ : id);
-}
-
-void UIScrollbar::render(IRenderer* renderer) {
-    if (!renderer || !canvas_) return;
-
-    Theme& theme = Theme::getInstance();
-    Theme::Style style = theme.computeEffectiveStyle(this);
-
-    glm::vec2 canvasPos = canvas_->getPosition();
-    glm::vec2 canvasSize = canvas_->getSize();
-    glm::vec2 contentSize = canvas_->getContentSize();
-    glm::vec2 cumulativeOffset = canvas_->getCumulativeScrollOffset();
-    glm::vec2 adjustedPos = canvasPos - cumulativeOffset;
-
-    if (orientation_ == Orientation::Vertical) {
-        float contentHeight = contentSize.y;
-        float canvasHeight = canvasSize.y;
-        if (contentHeight <= canvasHeight) return;
-
-        thickness_ = style.borderWidth > 0.0f ? style.borderWidth : 20.0f;
-        length_ = canvasHeight * (canvasHeight / contentHeight);
-        float maxScroll = canvasHeight - length_;
-        float scrollY = (canvas_->getScrollOffset().y / (contentHeight - canvasHeight)) * maxScroll;
-        glm::vec2 scrollbarPos(adjustedPos.x + canvasSize.x - thickness_, adjustedPos.y + scrollY);
-
-        if (style.backgroundTexture) {
-            renderer->drawTexture(scrollbarPos, glm::vec2(thickness_, length_), style.backgroundTexture);
-        } else {
-            renderer->drawRect(scrollbarPos, glm::vec2(thickness_, length_));
-        }
-        // Apply background color if no texture
-        if (!style.backgroundTexture) {
-            nvgFillColor(renderer->getNVGContext(), nvgRGBA(static_cast<unsigned char>(style.backgroundColor.r * 255),
-                                                           static_cast<unsigned char>(style.backgroundColor.g * 255),
-                                                           static_cast<unsigned char>(style.backgroundColor.b * 255),
-                                                           static_cast<unsigned char>(style.backgroundColor.a * 255)));
-            nvgFill(renderer->getNVGContext());
-        }
-    } else {
-        float contentWidth = contentSize.x;
-        float canvasWidth = canvasSize.x;
-        if (contentWidth <= canvasWidth) return;
-
-        thickness_ = style.borderWidth > 0.0f ? style.borderWidth : 20.0f;
-        length_ = canvasWidth * (canvasWidth / contentWidth);
-        float maxScroll = canvasWidth - length_;
-        float scrollX = (canvas_->getScrollOffset().x / (contentWidth - canvasWidth)) * maxScroll;
-        glm::vec2 scrollbarPos(adjustedPos.x + scrollX, adjustedPos.y + canvasSize.y - thickness_);
-
-        if (style.backgroundTexture) {
-            renderer->drawTexture(scrollbarPos, glm::vec2(length_, thickness_), style.backgroundTexture);
-        } else {
-            renderer->drawRect(scrollbarPos, glm::vec2(length_, thickness_));
-        }
-        // Apply background color if no texture
-        if (!style.backgroundTexture) {
-            nvgFillColor(renderer->getNVGContext(), nvgRGBA(static_cast<unsigned char>(style.backgroundColor.r * 255),
-                                                           static_cast<unsigned char>(style.backgroundColor.g * 255),
-                                                           static_cast<unsigned char>(style.backgroundColor.b * 255),
-                                                           static_cast<unsigned char>(style.backgroundColor.a * 255)));
-            nvgFill(renderer->getNVGContext());
-        }
+    UIScrollbar::UIScrollbar(Orientation orientation, const std::string& id)
+        : orientation_(orientation) {
+        // Set an identifier based on orientation if none is provided
+        setId(id.empty() ? (orientation == Orientation::Vertical ? "scrollbar-vertical" : "scrollbar-horizontal") : id);
+        // Register for style update events via the event bus
+        registerEventHandler("styleUpdate", [this](UIElement*, EventType) { onStyleUpdate(); });
     }
-}
 
-void UIScrollbar::handleInput(const SDL_Event& event) {
-    if (!canvas_) return;
+    bool UIScrollbar::handleInput(IMouseEvent* mouseEvent) {
+        if (!mouseEvent || !canvas_) return false;
+        glm::vec2 mousePos = mouseEvent->getPosition();
 
-    glm::vec2 mousePos(event.button.x, event.button.y);
-    switch (event.type) {
-        case SDL_MOUSEBUTTONDOWN:
-            if (hitTest(mousePos)) {
+        switch (mouseEvent->getType()) {
+        case EventType::MousePress:
+            if (mouseEvent->getButton() == MouseButton::Left && hitTest(mousePos)) {
                 dragging_ = true;
                 dragStart_ = mousePos;
+                return true;
             }
             break;
-        case SDL_MOUSEBUTTONUP:
-            dragging_ = false;
-            break;
-        case SDL_MOUSEMOTION:
+        case EventType::MouseRelease:
             if (dragging_) {
-                updatePosition(event);
+                dragging_ = false;
+                return true;
             }
             break;
-        case SDL_MOUSEWHEEL:
-            float scrollAmount = event.wheel.y * 10.0f; // Arbitrary scroll speed
-            if (orientation_ == Orientation::Vertical) {
-                float newY = canvas_->getScrollOffset().y - scrollAmount;
-                canvas_->setScrollOffset(canvas_->getScrollOffset().x, newY);
-            } else {
-                float newX = canvas_->getScrollOffset().x - scrollAmount;
-                canvas_->setScrollOffset(newX, canvas_->getScrollOffset().y);
+        case EventType::MouseMove:
+            if (dragging_) {
+                glm::vec2 delta = mousePos - dragStart_;
+                dragStart_ = mousePos;
+                updatePosition(delta);
+                return true;
             }
             break;
-        case SDL_KEYDOWN:
-            if (hitTest(glm::vec2(event.key.x, event.key.y))) { // Approximate position
-                float scrollStep = 20.0f; // Arbitrary step size
-                if (orientation_ == Orientation::Vertical) {
-                    switch (event.key.keysym.sym) {
-                        case SDLK_UP: canvas_->setScrollOffset(canvas_->getScrollOffset().x, canvas_->getScrollOffset().y - scrollStep); break;
-                        case SDLK_DOWN: canvas_->setScrollOffset(canvas_->getScrollOffset().x, canvas_->getScrollOffset().y + scrollStep); break;
-                        case SDLK_PAGEUP: canvas_->setScrollOffset(canvas_->getScrollOffset().x, canvas_->getScrollOffset().y - canvas_->getSize().y * 0.5f); break;
-                        case SDLK_PAGEDOWN: canvas_->setScrollOffset(canvas_->getScrollOffset().x, canvas_->getScrollOffset().y + canvas_->getSize().y * 0.5f); break;
-                    }
-                } else {
-                    switch (event.key.keysym.sym) {
-                        case SDLK_LEFT: canvas_->setScrollOffset(canvas_->getScrollOffset().x - scrollStep, canvas_->getScrollOffset().y); break;
-                        case SDLK_RIGHT: canvas_->setScrollOffset(canvas_->getScrollOffset().x + scrollStep, canvas_->getScrollOffset().y); break;
-                        case SDLK_PAGEUP: canvas_->setScrollOffset(canvas_->getScrollOffset().x - canvas_->getSize().x * 0.5f, canvas_->getScrollOffset().y); break;
-                        case SDLK_PAGEDOWN: canvas_->setScrollOffset(canvas_->getScrollOffset().x + canvas_->getSize().x * 0.5f, canvas_->getScrollOffset().y); break;
-                    }
-                }
-            }
+        default:
             break;
+        }
+        return false;
     }
-}
 
-void UIScrollbar::onStyleUpdate() {
-    Theme& theme = Theme::getInstance();
-    Theme::Style style = theme.computeEffectiveStyle(this);
+    bool UIScrollbar::hitTest(const glm::vec2& point) const {
+        if (!canvas_) return false;
+        glm::vec2 canvasPos = canvas_->getPosition();
+        glm::vec2 canvasSize = canvas_->getSize();
 
-    // Recompute thickness based on style
-    thickness_ = style.borderWidth > 0.0f ? style.borderWidth : 20.0f;
-
-    // Update appearance (e.g., ensure texture or color is applied in render)
-    // This is handled in render(), so no additional action needed here
-}
-
-void UIScrollbar::attachToCanvas(UICanvas* canvas) {
-    if (!canvas) {
-        spdlog::error("UIScrollbar: Cannot attach to null canvas");
-        return;
-    }
-    canvas_ = canvas;
-}
-
-bool UIScrollbar::hitTest(const glm::vec2& point) const {
-    if (!canvas_) return false;
-
-    glm::vec2 canvasPos = canvas_->getPosition();
-    glm::vec2 canvasSize = canvas_->getSize();
-    glm::vec2 contentSize = canvas_->getContentSize();
-    glm::vec2 cumulativeOffset = canvas_->getCumulativeScrollOffset();
-    glm::vec2 adjustedPos = canvasPos - cumulativeOffset;
-
-    if (orientation_ == Orientation::Vertical) {
-        float contentHeight = contentSize.y;
-        float canvasHeight = canvasSize.y;
-        if (contentHeight <= canvasHeight) return false;
-
-        float maxScroll = canvasHeight - length_;
-        float scrollY = (canvas_->getScrollOffset().y / (contentHeight - canvasHeight)) * maxScroll;
-        float scrollbarX = adjustedPos.x + canvasSize.x - thickness_;
-        float scrollbarY = adjustedPos.y + scrollY;
-        return (point.x >= scrollbarX && point.x <= scrollbarX + thickness_ &&
-                point.y >= scrollbarY && point.y <= scrollbarY + length_);
-    } else {
-        float contentWidth = contentSize.x;
-        float canvasWidth = canvasSize.x;
-        if (contentWidth <= canvasWidth) return false;
-
-        float maxScroll = canvasWidth - length_;
-        float scrollX = (canvas_->getScrollOffset().x / (contentWidth - canvasWidth)) * maxScroll;
-        float scrollbarX = adjustedPos.x + scrollX;
-        float scrollbarY = adjustedPos.y + canvasSize.y - thickness_;
-        return (point.x >= scrollbarX && point.x <= scrollbarX + length_ &&
+        if (orientation_ == Orientation::Vertical) {
+            float scrollbarX = canvasPos.x + canvasSize.x - thickness_;
+            return (point.x >= scrollbarX && point.x <= scrollbarX + thickness_ &&
+                point.y >= canvasPos.y && point.y <= canvasPos.y + canvasSize.y);
+        }
+        else { // Horizontal
+            float scrollbarY = canvasPos.y + canvasSize.y - thickness_;
+            return (point.x >= canvasPos.x && point.x <= canvasPos.x + canvasSize.x &&
                 point.y >= scrollbarY && point.y <= scrollbarY + thickness_);
+        }
     }
-}
 
-void UIScrollbar::updatePosition(const SDL_Event& event) {
-    glm::vec2 mousePos(event.button.x, event.button.y);
-    glm::vec2 delta = mousePos - dragStart_;
-    dragStart_ = mousePos;
+    void UIScrollbar::updatePosition(const glm::vec2& delta) {
+        if (!canvas_) return;
 
-    if (orientation_ == Orientation::Vertical) {
-        float canvasHeight = canvas_->getSize().y;
-        float contentHeight = canvas_->getContentSize().y;
-        float maxScroll = contentHeight - canvasHeight;
-        float scrollPerPixel = maxScroll / (canvasHeight - length_);
-        float newY = canvas_->getScrollOffset().y + delta.y * scrollPerPixel;
-        canvas_->setScrollOffset(canvas_->getScrollOffset().x, newY);
-    } else {
-        float canvasWidth = canvas_->getSize().x;
-        float contentWidth = canvas_->getContentSize().x;
-        float maxScroll = contentWidth - canvasWidth;
-        float scrollPerPixel = maxScroll / (canvasWidth - length_);
-        float newX = canvas_->getScrollOffset().x + delta.x * scrollPerPixel;
-        canvas_->setScrollOffset(newX, canvas_->getScrollOffset().y);
+        if (orientation_ == Orientation::Vertical) {
+            float contentHeight = canvas_->getContentSize().y;
+            float canvasHeight = canvas_->getSize().y;
+            if (contentHeight <= canvasHeight) return;
+
+            // Calculate thumb length based on the ratio of visible area to total content
+            length_ = canvasHeight * (canvasHeight / contentHeight);
+            float maxScrollThumb = canvasHeight - length_;
+            // Compute proportional scroll change
+            float scrollDelta = (maxScrollThumb > 0.0f) ? (delta.y / maxScrollThumb) * (contentHeight - canvasHeight) : 0.0f;
+            glm::vec2 currentOffset = canvas_->getScrollOffset();
+            canvas_->setScrollOffset(currentOffset.x, currentOffset.y + scrollDelta);
+        }
+        else {
+            float contentWidth = canvas_->getContentSize().x;
+            float canvasWidth = canvas_->getSize().x;
+            if (contentWidth <= canvasWidth) return;
+
+            length_ = canvasWidth * (canvasWidth / contentWidth);
+            float maxScrollThumb = canvasWidth - length_;
+            float scrollDelta = (maxScrollThumb > 0.0f) ? (delta.x / maxScrollThumb) * (contentWidth - canvasWidth) : 0.0f;
+            glm::vec2 currentOffset = canvas_->getScrollOffset();
+            canvas_->setScrollOffset(currentOffset.x + scrollDelta, currentOffset.y);
+        }
     }
-}
 
-void UIScrollbar::updateScrollOffset() {
-    // Called by UICanvas if needed (e.g., after layout change)
-}
+    void UIScrollbar::onStyleUpdate() {
+        spdlog::debug("UIScrollbar::onStyleUpdate: updating style parameters");
+        // Optionally update thickness or other parameters based on the current theme.
+        // For now, we leave thickness_ as its default value.
+    }
+
+    void UIScrollbar::attachToCanvas(UICanvas* canvas) {
+        if (!canvas) {
+            spdlog::error("UIScrollbar: Cannot attach to null canvas");
+            return;
+        }
+        canvas_ = canvas;
+    }
+
+    void UIScrollbar::render(IRenderer* renderer) {
+        if (!renderer || !canvas_) return;
+
+        glm::vec2 canvasPos = canvas_->getPosition();
+        glm::vec2 canvasSize = canvas_->getSize();
+
+        if (orientation_ == Orientation::Vertical) {
+            float contentHeight = canvas_->getContentSize().y;
+            if (contentHeight <= canvasSize.y) return; // No scrolling needed
+
+            length_ = canvasSize.y * (canvasSize.y / contentHeight);
+            float maxScrollContent = contentHeight - canvasSize.y;
+            float maxScrollThumb = canvasSize.y - length_;
+            float currentScroll = canvas_->getScrollOffset().y;
+            float scrollY = (maxScrollContent > 0) ? (currentScroll / maxScrollContent) * maxScrollThumb : 0.0f;
+            float scrollbarX = canvasPos.x + canvasSize.x - thickness_;
+
+            nvgBeginPath(renderer->getNVGContext());
+            nvgRect(renderer->getNVGContext(), scrollbarX, canvasPos.y + scrollY, thickness_, length_);
+            nvgFillColor(renderer->getNVGContext(), nvgRGBA(150, 150, 150, 255));
+            nvgFill(renderer->getNVGContext());
+        }
+        else { // Horizontal
+            float contentWidth = canvas_->getContentSize().x;
+            if (contentWidth <= canvasSize.x) return; // No scrolling needed
+
+            length_ = canvasSize.x * (canvasSize.x / contentWidth);
+            float maxScrollContent = contentWidth - canvasSize.x;
+            float maxScrollThumb = canvasSize.x - length_;
+            float currentScroll = canvas_->getScrollOffset().x;
+            float scrollX = (maxScrollContent > 0) ? (currentScroll / maxScrollContent) * maxScrollThumb : 0.0f;
+            float scrollbarY = canvasPos.y + canvasSize.y - thickness_;
+
+            nvgBeginPath(renderer->getNVGContext());
+            nvgRect(renderer->getNVGContext(), canvasPos.x + scrollX, scrollbarY, length_, thickness_);
+            nvgFillColor(renderer->getNVGContext(), nvgRGBA(150, 150, 150, 255));
+            nvgFill(renderer->getNVGContext());
+        }
+    }
 
 } // namespace ui

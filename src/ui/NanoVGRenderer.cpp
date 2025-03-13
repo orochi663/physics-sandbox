@@ -1,80 +1,85 @@
-#include "NanoVGRenderer.h"
+#include "ui/NanoVGRenderer.h"
+#include "ui/NanoVGResourceLoader.h" // For NanoVGTexture definition
+#include "ui/NanoVGTexture.h"
 #include <nanovg.h>
 #include <glm/gtc/type_ptr.hpp>
 #include <spdlog/spdlog.h>
 
 namespace ui {
 
-NanoVGRenderer::NanoVGRenderer() {
-    context_ = nvgCreateGL3(NVG_ANTIALIAS | NVG_STENCIL_STROKES);
-    if (!context_) {
-        throw std::runtime_error("Could not initialize NanoVG");
-    }
-}
-
-NanoVGRenderer::~NanoVGRenderer() {
-    if (context_) {
-        nvgDeleteGL3(context_);
+NanoVGRenderer::NanoVGRenderer(NVGcontext* ctx)
+    : ctx_(ctx), screenSize_(1280.0f, 720.0f) // Default screen size; adjust as needed
+{
+    if (!ctx_) {
+        throw std::runtime_error("NanoVGRenderer: NVGcontext is null");
     }
 }
 
 void NanoVGRenderer::drawRect(const glm::vec2& position, const glm::vec2& size, const glm::vec4& color) {
-    nvgBeginPath(context_);
-    nvgRect(context_, position.x, position.y, size.x, size.y);
-    nvgFillColor(context_, nvgRGBAf(color.r, color.g, color.b, color.a));
-    nvgFill(context_);
+    nvgBeginPath(ctx_);
+    nvgRect(ctx_, position.x, position.y, size.x, size.y);
+    nvgFillColor(ctx_, nvgRGBAf(color.r, color.g, color.b, color.a));
+    nvgFill(ctx_);
 }
 
 void NanoVGRenderer::drawLine(const glm::vec2& start, const glm::vec2& end, const glm::vec4& color) {
-    nvgBeginPath(context_);
-    nvgMoveTo(context_, start.x, start.y);
-    nvgLineTo(context_, end.x, end.y);
-    nvgStrokeColor(context_, nvgRGBAf(color.r, color.g, color.b, color.a));
-    nvgStroke(context_);
+    nvgBeginPath(ctx_);
+    nvgMoveTo(ctx_, start.x, start.y);
+    nvgLineTo(ctx_, end.x, end.y);
+    nvgStrokeColor(ctx_, nvgRGBAf(color.r, color.g, color.b, color.a));
+    nvgStroke(ctx_);
 }
 
 void NanoVGRenderer::drawText(const glm::vec2& position, const std::string& text, const glm::vec4& color, float fontSize) {
-    nvgBeginFrame(context_, 1280.0f, 720.0f, 1.0f); // Placeholder; should use dynamic size
-    nvgFontSize(context_, fontSize);
-    nvgFontFace(context_, "sans");
-    nvgFillColor(context_, nvgRGBAf(color.r, color.g, color.b, color.a));
-    nvgText(context_, position.x, position.y, text.c_str(), nullptr);
-    nvgEndFrame(context_);
-}
-
-glm::vec2 NanoVGRenderer::measureText(const std::string& text, float fontSize) {
-    nvgBeginFrame(context_, 1280.0f, 720.0f, 1.0f); // Placeholder
-    nvgFontSize(context_, fontSize);
-    nvgFontFace(context_, "sans");
-    float bounds[4];
-    nvgTextBounds(context_, 0, 0, text.c_str(), nullptr, bounds);
-    nvgEndFrame(context_);
-    return glm::vec2(bounds[2] - bounds[0], bounds[3] - bounds[1]);
+    nvgFontSize(ctx_, fontSize);
+    nvgFontFace(ctx_, "sans"); // Using default font; ideally, obtain from theme
+    nvgFillColor(ctx_, nvgRGBAf(color.r, color.g, color.b, color.a));
+    nvgText(ctx_, position.x, position.y, text.c_str(), nullptr);
 }
 
 void NanoVGRenderer::drawTexture(const glm::vec2& position, const glm::vec2& size, ITexture* texture) {
     if (!texture) return;
-    nvgBeginPath(context_);
-    nvgRect(context_, position.x, position.y, size.x, size.y);
-    nvgFillPaint(context_, texture->getPaint());
-    nvgFill(context_);
+    
+    // Cast to NanoVGTexture to access getPaint() method.
+    auto* nvgTex = dynamic_cast<NanoVGTexture*>(texture);
+    if (!nvgTex) {
+        spdlog::error("NanoVGRenderer::drawTexture: Provided texture is not a NanoVGTexture");
+        return;
+    }
+    
+    // Retrieve paint for the entire texture. Optionally, you can pass a color multiplier.
+    NVGpaint paint = nvgTex->getPaint();
+    
+    nvgBeginPath(ctx_);
+    nvgRect(ctx_, position.x, position.y, size.x, size.y);
+    nvgFillPaint(ctx_, paint);
+    nvgFill(ctx_);
+}
+
+glm::vec2 NanoVGRenderer::measureText(const std::string& text, float fontSize) {
+    nvgFontSize(ctx_, fontSize);
+    nvgFontFace(ctx_, "sans");
+    float bounds[4];
+    nvgTextBounds(ctx_, 0, 0, text.c_str(), nullptr, bounds);
+    return glm::vec2(bounds[2] - bounds[0], bounds[3] - bounds[1]);
 }
 
 void NanoVGRenderer::setClipRect(const glm::vec2& position, const glm::vec2& size) {
-    nvgScissor(context_, position.x, position.y, size.x, size.y);
+    nvgScissor(ctx_, position.x, position.y, size.x, size.y);
+    clipRect_ = std::make_pair(position, size);
 }
 
 void NanoVGRenderer::resetClipRect() {
-    nvgResetScissor(context_);
+    nvgResetScissor(ctx_);
+    clipRect_.reset();
 }
 
 void* NanoVGRenderer::getNVGContext() {
-    return context_;
+    return ctx_;
 }
 
 glm::vec2 NanoVGRenderer::getScreenSize() const {
-    // Placeholder implementation; should integrate with actual window size
-    return glm::vec2(1280.0f, 720.0f); // Replace with dynamic size from SDL/GLFW
+    return screenSize_;
 }
 
 } // namespace ui

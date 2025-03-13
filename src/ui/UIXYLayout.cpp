@@ -1,5 +1,5 @@
-#include "UIXYLayout.h"
-#include "UICanvas.h"
+#include "ui/UIXYLayout.h"
+#include "ui/UICanvas.h"
 
 namespace ui {
 

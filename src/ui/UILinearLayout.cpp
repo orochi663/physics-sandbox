@@ -1,5 +1,5 @@
-#include "UILinearLayout.h"
-#include "UICanvas.h"
+#include "ui/UILinearLayout.h"
+#include "ui/UICanvas.h"
 
 namespace ui {
 

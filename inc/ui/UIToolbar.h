@@ -1,26 +1,25 @@
 #pragma once
-#include "UICanvas.h"
-#include "UIBoxLayout.h"
+#include "ui/UICanvas.h"
+#include "ui/UIBoxLayout.h"
 #include <memory>
+#include <string>
 
 namespace ui {
 
-enum class Orientation {
-    Horizontal,
-    Vertical
-};
+    class UIToolbar : public UICanvas {
+    public:
+        // Create a toolbar with a given orientation.
+        static std::unique_ptr<UIToolbar> create(UIBoxLayout::Orientation orientation = UIBoxLayout::Orientation::Horizontal,
+            const std::string& styleType = "toolbar",
+            int zIndex = 0);
+        void render(IRenderer* renderer) override;
 
-class UIToolbar : public UICanvas {
-public:
-    static std::unique_ptr<UIToolbar> create(Orientation orientation = Orientation::Horizontal);
-    void render(IRenderer* renderer) override;
-    void addChild(std::unique_ptr<UIElement> child) override;
-    void setOrientation(Orientation orientation) { orientation_ = orientation; layout_->setOrientation(orientation); }
+        // Convenience method to add a button.
+        void addButton(std::unique_ptr<UIButton> button);
 
-private:
-    UIToolbar(Orientation orientation);
-    Orientation orientation_;
-    std::unique_ptr<UIBoxLayout> layout_;
-};
+    private:
+        UIToolbar(UIBoxLayout::Orientation orientation, const std::string& styleType, int zIndex);
+        std::unique_ptr<UIBoxLayout> layout_;
+    };
 
 } // namespace ui

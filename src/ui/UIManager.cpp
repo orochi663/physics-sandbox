@@ -1,9 +1,15 @@
-#include "UIManager.h"
-#include "UICanvas.h"
-#include "UIDockable.h"
-#include "UIElement.h"
+#include "ui/UIManager.h"
+#include "ui/UICanvas.h"
+#include "ui/UIDockable.h"
+#include "ui/UIElement.h"
+#include "ui/UIEventBus.h" // Added for event publishing
 #include <algorithm>
 #include <spdlog/spdlog.h>
+#include <chrono>
+#include <queue>
+#include <coroutine>
+#include <thread>
+#include <condition_variable>
 
 namespace ui {
 
@@ -12,11 +18,29 @@ UIManager& UIManager::getInstance() {
     return instance;
 }
 
-UIManager::UIManager() {}
+UIManager::UIManager() 
+    : renderThread_([this]() { renderLoop(); }),
+      coroutineThread_([this]() { coroutineLoop(); }) {
+}
 
 UIManager::~UIManager() {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        renderThreadRunning_ = false;
+        coroutineThreadRunning_ = false;
+    }
+    renderCv_.notify_all();
+    coroutineCv_.notify_all();
+    renderThread_.join();
+    coroutineThread_.join();
+    std::lock_guard<std::mutex> lock(mutex_);
     canvases_.clear();
     dockables_.clear();
+    while (!coroutineQueue_.empty()) {
+        auto handle = coroutineQueue_.top().handle;
+        if (handle && !handle.done()) handle.destroy();
+        coroutineQueue_.pop();
+    }
 }
 
 void UIManager::processInput(void* rawEvent) {
@@ -29,18 +53,25 @@ void UIManager::processInput(void* rawEvent) {
     std::unique_ptr<IInputEvent> event = translator_->translate(rawEvent);
     if (!event) return;
 
+    UIEventBus& eventBus = UIEventBus::getInstance();
     switch (event->getType()) {
         case EventType::MouseMove:
+            eventBus.publish("MouseMove", nullptr, event->getType());
+            break;
         case EventType::MousePress:
+            eventBus.publish("MousePress", nullptr, event->getType());
+            break;
         case EventType::MouseRelease:
-            dispatchMouseEvent(static_cast<IMouseEvent*>(event.get()));
+            eventBus.publish("MouseRelease", nullptr, event->getType());
             break;
         case EventType::KeyPress:
+            eventBus.publish("KeyPress", focusedElement_, event->getType());
+            break;
         case EventType::KeyRelease:
-            dispatchKeyboardEvent(static_cast<IKeyboardEvent*>(event.get()));
+            eventBus.publish("KeyRelease", focusedElement_, event->getType());
             break;
         case EventType::TextInput:
-            dispatchTextInputEvent(static_cast<ITextInputEvent*>(event.get()));
+            eventBus.publish("TextInput", focusedElement_, event->getType());
             break;
     }
 }
@@ -55,9 +86,7 @@ void UIManager::applyTheme() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (globalTheme_) {
         for (auto& canvas : canvases_) {
-            if (canvas) {
-                canvas->applyTheme(globalTheme_.get());
-            }
+            if (canvas) canvas->applyTheme(globalTheme_.get());
         }
     }
 }
@@ -132,28 +161,92 @@ void UIManager::removeCanvas(const UICanvas* canvas) {
     dockables_.erase(dockIt, dockables_.end());
 }
 
+void UIManager::scheduleCoroutine(float seconds, std::coroutine_handle<> handle) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!handle) {
+        spdlog::warn("Attempted to schedule null coroutine handle");
+        return;
+    }
+    auto resumeTime = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+        std::chrono::duration<float>(seconds));
+    coroutineQueue_.push({resumeTime, handle});
+    coroutineCv_.notify_one();
+}
+
 void UIManager::update() {
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto& canvas : canvases_) {
         if (canvas) canvas->update();
+    }
+
+    std::vector<UICanvas*> dirtyCanvases;
+    for (auto& canvas : canvases_) {
+        if (canvas && canvas->isDirty()) {
+            dirtyCanvases.push_back(canvas.get());
+        }
+    }
+    if (!dirtyCanvases.empty()) {
+        std::lock_guard<std::mutex> renderLock(renderMutex_);
+        renderQueue_.insert(renderQueue_.end(), dirtyCanvases.begin(), dirtyCanvases.end());
+        renderCv_.notify_one();
     }
 }
 
 void UIManager::render(IRenderer* renderer) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!renderer) return;
+    renderer_ = renderer;
+}
 
-    // Sort canvases by zIndex for proper rendering order
-    std::vector<UICanvas*> sortedCanvases;
-    for (auto& canvas : canvases_) {
-        if (canvas) sortedCanvases.push_back(canvas.get());
+void UIManager::renderLoop() {
+    while (renderThreadRunning_) {
+        std::vector<UICanvas*> canvasesToRender;
+        {
+            std::unique_lock<std::mutex> lock(renderMutex_);
+            renderCv_.wait(lock, [this]() { return !renderQueue_.empty() || !renderThreadRunning_; });
+            if (!renderThreadRunning_) break;
+            canvasesToRender.swap(renderQueue_);
+        }
+
+        if (renderer_) {
+            std::sort(canvasesToRender.begin(), canvasesToRender.end(),
+                      [](const UICanvas* a, const UICanvas* b) { return a->getZIndex() < b->getZIndex(); });
+            for (auto* canvas : canvasesToRender) {
+                if (canvas && canvas->isVisible()) {
+                    canvas->doRender(renderer_);
+                }
+            }
+        }
     }
-    std::sort(sortedCanvases.begin(), sortedCanvases.end(),
-              [](const UICanvas* a, const UICanvas* b) { return a->getZIndex() < b->getZIndex(); });
+}
 
-    for (auto* canvas : sortedCanvases) {
-        if (canvas && canvas->isVisible()) {
-            canvas->render(renderer);
+void UIManager::coroutineLoop() {
+    while (coroutineThreadRunning_) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        if (coroutineQueue_.empty()) {
+            coroutineCv_.wait(lock, [this]() { return !coroutineQueue_.empty() || !coroutineThreadRunning_; });
+            if (!coroutineThreadRunning_) break;
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        while (!coroutineQueue_.empty() && coroutineQueue_.top().resumeTime <= now) {
+            auto [resumeTime, handle] = coroutineQueue_.top();
+            coroutineQueue_.pop();
+            lock.unlock();
+            if (handle && !handle.done()) {
+                handle.resume();
+            } else if (handle) {
+                spdlog::warn("Attempted to resume completed coroutine");
+                handle.destroy();
+            }
+            lock.lock();
+        }
+
+        if (!coroutineQueue_.empty()) {
+            auto nextWake = coroutineQueue_.top().resumeTime;
+            lock.unlock();
+            std::this_thread::sleep_until(nextWake);
+            lock.lock();
         }
     }
 }
@@ -179,39 +272,6 @@ void UIManager::handleDockableRelease(UIDockable* dockable) {
         dockable->setDockPosition(newPosition);
     }
     dockable->setDragging(false);
-}
-
-bool UIManager::dispatchMouseEvent(IMouseEvent* mouseEvent) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!mouseEvent) return false;
-
-    // Reverse order for top-down (capturing phase)
-    for (auto it = canvases_.rbegin(); it != canvases_.rend(); ++it) {
-        if (*it && (*it)->handleInput(mouseEvent)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool UIManager::dispatchKeyboardEvent(IKeyboardEvent* keyboardEvent) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!keyboardEvent) return false;
-
-    if (focusedElement_) {
-        return focusedElement_->handleInput(keyboardEvent);
-    }
-    return false;
-}
-
-bool UIManager::dispatchTextInputEvent(ITextInputEvent* textEvent) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!textEvent) return false;
-
-    if (focusedElement_) {
-        return focusedElement_->handleInput(textEvent);
-    }
-    return false;
 }
 
 UIElement* UIManager::findNextFocusable(UIElement* current, bool withinScope) {
@@ -304,21 +364,19 @@ void UIManager::updateDockableSnapping(UIDockable* dockable, const glm::vec2& po
     std::lock_guard<std::mutex> lock(mutex_);
     if (!dockable) return;
 
-    // Update position temporarily for snapping check
     glm::vec2 originalPos = dockable->getPosition();
     dockable->setPosition(position);
 
-    IRenderer* renderer = nullptr; // Assume access to renderer (e.g., via global or UICanvas)
+    IRenderer* renderer = renderer_;
     glm::vec2 screenSize = (renderer) ? renderer->getScreenSize() : glm::vec2(1280.0f, 720.0f);
 
     DockPosition newPosition = checkDockableSnapping(dockable, position, screenSize);
     if (newPosition != DockPosition::None) {
         dockable->setDockPosition(newPosition);
     } else {
-        dockable->setDockPosition(DockPosition::None); // Ensure floating state
+        dockable->setDockPosition(DockPosition::None);
     }
 
-    // Restore original position if not docked
     if (dockable->getDockPosition() == DockPosition::None) {
         dockable->setPosition(originalPos);
     }
@@ -330,32 +388,26 @@ DockPosition UIManager::checkDockableSnapping(UIDockable* dockable, const glm::v
 
     const float snapThreshold = 20.0f;
 
-    // Check screen edges
     if (position.y < snapThreshold) return DockPosition::Top;
     if (position.y + dockable->getSize().y > screenSize.y - snapThreshold) return DockPosition::Bottom;
     if (position.x < snapThreshold) return DockPosition::Left;
     if (position.x + dockable->getSize().x > screenSize.x - snapThreshold) return DockPosition::Right;
 
-    // Check other dockables
     for (UIDockable* other : dockables_) {
         if (other == dockable || other->getDockPosition() == DockPosition::None) continue;
 
         glm::vec2 otherPos = other->getPosition();
         glm::vec2 otherSize = other->getSize();
 
-        // Bottom to top
         if (std::abs(position.y + dockable->getSize().y - otherPos.y) < snapThreshold) {
             return DockPosition::Top;
         }
-        // Top to bottom
         if (std::abs(position.y - (otherPos.y + otherSize.y)) < snapThreshold) {
             return DockPosition::Bottom;
         }
-        // Right to left
         if (std::abs(position.x + dockable->getSize().x - otherPos.x) < snapThreshold) {
             return DockPosition::Left;
         }
-        // Left to right
         if (std::abs(position.x - (otherPos.x + otherSize.x)) < snapThreshold) {
             return DockPosition::Right;
         }

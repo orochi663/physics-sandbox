@@ -1,6 +1,6 @@
 #pragma once
 #include "IInputTranslator.h"
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include <unordered_map>
 
 namespace ui {
@@ -26,13 +26,13 @@ private:
     };
 
     const std::unordered_map<SDL_Keycode, KeyCode> keyCodeMap_ = {
-        {SDLK_a, KeyCode::A}, {SDLK_b, KeyCode::B}, {SDLK_c, KeyCode::C}, {SDLK_d, KeyCode::D},
-        {SDLK_e, KeyCode::E}, {SDLK_f, KeyCode::F}, {SDLK_g, KeyCode::G}, {SDLK_h, KeyCode::H},
-        {SDLK_i, KeyCode::I}, {SDLK_j, KeyCode::J}, {SDLK_k, KeyCode::K}, {SDLK_l, KeyCode::L},
-        {SDLK_m, KeyCode::M}, {SDLK_n, KeyCode::N}, {SDLK_o, KeyCode::O}, {SDLK_p, KeyCode::P},
-        {SDLK_q, KeyCode::Q}, {SDLK_r, KeyCode::R}, {SDLK_s, KeyCode::S}, {SDLK_t, KeyCode::T},
-        {SDLK_u, KeyCode::U}, {SDLK_v, KeyCode::V}, {SDLK_w, KeyCode::W}, {SDLK_x, KeyCode::X},
-        {SDLK_y, KeyCode::Y}, {SDLK_z, KeyCode::Z},
+        {SDLK_A, KeyCode::A}, {SDLK_B, KeyCode::B}, {SDLK_C, KeyCode::C}, {SDLK_D, KeyCode::D},
+        {SDLK_E, KeyCode::E}, {SDLK_F, KeyCode::F}, {SDLK_G, KeyCode::G}, {SDLK_H, KeyCode::H},
+        {SDLK_I, KeyCode::I}, {SDLK_J, KeyCode::J}, {SDLK_K, KeyCode::K}, {SDLK_L, KeyCode::L},
+        {SDLK_M, KeyCode::M}, {SDLK_N, KeyCode::N}, {SDLK_O, KeyCode::O}, {SDLK_P, KeyCode::P},
+        {SDLK_Q, KeyCode::Q}, {SDLK_R, KeyCode::R}, {SDLK_S, KeyCode::S}, {SDLK_T, KeyCode::T},
+        {SDLK_U, KeyCode::U}, {SDLK_V, KeyCode::V}, {SDLK_W, KeyCode::W}, {SDLK_X, KeyCode::X},
+        {SDLK_Y, KeyCode::Y}, {SDLK_Z, KeyCode::Z},
         {SDLK_0, KeyCode::Num0}, {SDLK_1, KeyCode::Num1}, {SDLK_2, KeyCode::Num2},
         {SDLK_3, KeyCode::Num3}, {SDLK_4, KeyCode::Num4}, {SDLK_5, KeyCode::Num5},
         {SDLK_6, KeyCode::Num6}, {SDLK_7, KeyCode::Num7}, {SDLK_8, KeyCode::Num8},
@@ -55,8 +55,8 @@ private:
         {SDLK_LEFTBRACE, KeyCode::CurlyBracketOpen}, {SDLK_RIGHTBRACE, KeyCode::CurlyBracketClose},
         {SDLK_SLASH, KeyCode::Slash}, {SDLK_BACKSLASH, KeyCode::BackSlash},
         {SDLK_PIPE, KeyCode::Pipe}, {SDLK_COLON, KeyCode::Colon},
-        {SDLK_SEMICOLON, KeyCode::Semicolon}, {SDLK_QUOTE, KeyCode::SingleQuote},
-        {SDLK_QUOTEDBL, KeyCode::DoubleQuote}, {SDLK_COMMA, KeyCode::Comma},
+        {SDLK_SEMICOLON, KeyCode::Semicolon}, {SDLK_APOSTROPHE, KeyCode::SingleQuote},
+        {SDLK_DBLAPOSTROPHE, KeyCode::DoubleQuote}, {SDLK_COMMA, KeyCode::Comma},
         {SDLK_PERIOD, KeyCode::Dot}, {SDLK_LESS, KeyCode::AngleBracketOpen},
         {SDLK_GREATER, KeyCode::AngleBracketClose}, {SDLK_QUESTION, KeyCode::QuestionMark}
     };

@@ -38,7 +38,7 @@ endif()
 # Check if C++20 is supported
 include(CheckCXXCompilerFlag)
 if(NOT CMAKE_CXX20_STANDARD_COMPILE_OPTION)
-    message(ERROR "C++20 not supported")
+    message(FATAL_ERROR "C++20 not supported")
 endif()
 
 # Debug/Release build configurations
@@ -69,6 +69,7 @@ if(CMAKE_BUILD_TYPE MATCHES Debug AND ENABLE_SANITIZERS)
     endif()
 endif()
 
+# ------------------------------------------------------------------------------
 # Find dependencies (assumed to be installed by the user)
 find_package(SDL3 REQUIRED)
 if(NOT SDL3_FOUND)
@@ -82,6 +83,41 @@ if(NOT Vulkan_FOUND)
 endif()
 message(STATUS "Found Vulkan")
 
+find_package(glm CONFIG REQUIRED)
+if(NOT glm_FOUND)
+    message(FATAL_ERROR "glm not found")
+endif()
+message(STATUS "Found glm")
+
+find_package(spdlog CONFIG REQUIRED)
+if(NOT spdlog_FOUND)
+    message(FATAL_ERROR "spdlog not found")
+endif()
+message(STATUS "Found spdlog")
+
+find_package(nanovg CONFIG REQUIRED)
+if(NOT nanovg_FOUND)
+    message(FATAL_ERROR "nanovg not found")
+endif()
+message(STATUS "Found nanovg")
+
+find_package(nanovg CONFIG REQUIRED)
+if(NOT nanovg_FOUND)
+    message(FATAL_ERROR "nanovg not found")
+endif()
+message(STATUS "Found nanovg")
+
+find_package(nlohmann_json CONFIG REQUIRED)
+if(NOT nlohmann_json_FOUND)
+    message(FATAL_ERROR "nlohmann json not found")
+endif()
+message(STATUS "Found json nlohmann")
+
+# ------------------------------------------------------------------------------
+# Include directories: add our 'inc' directory to include all headers
+include_directories("${CMAKE_SOURCE_DIR}/inc")
+
+# ------------------------------------------------------------------------------
 # Shader compilation as a standalone target
 find_program(GLSLC glslc)
 if(NOT GLSLC)
@@ -144,21 +180,20 @@ if(BUILD_MODE MATCHES "LIBRARY")
     target_sources(sandbox_lib PRIVATE ${PROJECT_HEADERS})
     source_group(TREE "${CMAKE_SOURCE_DIR}/inc" PREFIX "Header Files" FILES ${PROJECT_HEADERS})
 else()  # BUILD_MODE is EXECUTABLE
-    add_executable(sandbox ${SOURCES})
-    message(STATUS "Configured as an executable target: sandbox")
+    add_executable(${PROJECT_NAME} ${SOURCES})
+    message(STATUS "Configured as an executable target")
     
     # Add headers to the executable target for Visual Studio
-    target_sources(sandbox PRIVATE ${PROJECT_HEADERS})
+    target_sources(${PROJECT_NAME} PRIVATE ${PROJECT_HEADERS})
     source_group(TREE "${CMAKE_SOURCE_DIR}/inc" PREFIX "Header Files" FILES ${PROJECT_HEADERS})
     
     target_link_libraries(sandbox
         SDL3::SDL3
         Vulkan::Vulkan
-        nanovg
-        assimp
-        spdlog
-        glm
-        stb_image
+        nanovg::nanovg
+        spdlog::spdlog
+        glm::glm
+		nlohmann_json::nlohmann_json
     )
 endif()
 
@@ -221,3 +256,4 @@ if(BUILD_MODE MATCHES "EXECUTABLE")
 else()  # LIBRARY mode
     set(CPACK_INSTALL_CMAKE_PROJECTS "${CMAKE_BINARY_DIR};sandbox_lib;ALL;/")
 endif()
+

@@ -1,96 +1,106 @@
-#include "UIButton.h"
-#include "UILabel.h"
-#include "UICanvas.h"
+#include "ui/UIButton.h"
+#include "ui/UILabel.h"
+#include "ui/UICanvas.h"
+#include "ui/IRenderer.h"
+#include "ui/ITexture.h"
 #include <spdlog/spdlog.h>
+#include <glm/glm.hpp>
+#include <algorithm>
 
 namespace ui {
 
-std::unique_ptr<UIButton> UIButton::create(const std::string& labelText) {
-    return std::unique_ptr<UIButton>(new UIButton(labelText));
-}
-
-UIButton::UIButton(const std::string& labelText) {
-    styleType_ = "button";
-    label_ = std::make_unique<UILabel>(this);
-    label_->setText(labelText);
-    label_->setStyleType("buttonLabel");
-    setTextAlignment(TextAlignment::Center); // Default to Center for symmetry
-    registerEventHandler("styleUpdate", [this](UIElement*, EventType) { onStyleUpdate(); });
-    setOnClick([]() { spdlog::info("Button clicked!"); }); // Default callback
-}
-
-void UIButton::render(IRenderer* renderer) {
-    if (!renderer || !dirty_) return;
-
-    const UITheme* theme = nullptr;
-    if (auto* canvas = dynamic_cast<UICanvas*>(parent_.value_or(nullptr))) {
-        theme = canvas->getEffectiveTheme();
-    }
-    if (!theme) return;
-
-    UIStyle style = theme->getStyle(styleType_);
-    std::unordered_map<std::string, bool> states = {{"hovered", isHovered_}, {"pressed", isPressed_}};
-    UIStyle effectiveStyle = style.computeEffectiveStyle(states);
-
-    glm::vec2 adjustedPos = getPosition();
-    if (isPressed_) {
-        adjustedPos += glm::vec2(2.0f, 2.0f);
+    std::unique_ptr<UIButton> UIButton::create(const std::string& labelText) {
+        return std::unique_ptr<UIButton>(new UIButton(labelText));
     }
 
-    if (effectiveStyle.backgroundTexture) {
-        renderer->drawTexture(adjustedPos, getSize(), effectiveStyle.backgroundTexture);
-    } else {
-        renderer->drawRect(adjustedPos, getSize(), effectiveStyle.backgroundColor);
+    UIButton::UIButton(const std::string& labelText) {
+        styleType_ = "button";
+        // Use factory method to create a UILabel.
+        label_ = UILabel::create(labelText);
+        label_->setParent(this);
+        label_->setStyleType("buttonLabel");
+        setTextAlignment(TextAlignment::Center);
+        registerEventHandler("styleUpdate", [this](UIElement*, EventType) { onStyleUpdate(); });
     }
 
-    // Position label based on text alignment
-    glm::vec2 labelPos = adjustedPos;
-    switch (getTextAlignment()) {
-        case TextAlignment::Left:
-            labelPos.x += 5.0f;
-            break;
-        case TextAlignment::Right:
-            labelPos.x += getSize().x - label_->getSize().x - 5.0f;
-            break;
-        case TextAlignment::Center:
-            labelPos.x += (getSize().x - label_->getSize().x) / 2.0f;
-            break;
-        default:
-            labelPos.x += (getSize().x - label_->getSize().x) / 2.0f; // Default to Center
-            break;
+    void UIButton::setText(const std::string& text) {
+        if (label_) {
+            label_->setText(text);
+            markDirty();
+        }
     }
-    labelPos.y += (getSize().y - label_->getSize().y) / 2.0f;
-    label_->setPosition(labelPos);
-    label_->render(renderer);
 
-    dirty_ = false;
-}
-
-bool UIButton::handleInput(IMouseEvent* mouseEvent) {
-    if (!mouseEvent) return false;
-
-    bool handled = UIElement::handleInput(mouseEvent);
-    if (handled) return true;
-
-    return false; // Bubbling phase handled by base class
-}
-
-bool UIButton::handleInput(IKeyboardEvent* keyboardEvent) {
-    if (!keyboardEvent) return false;
-
-    bool handled = UIElement::handleInput(keyboardEvent);
-    if (handled || !hasFocus()) return handled;
-
-    if (keyboardEvent->getType() == EventType::KeyPress && keyboardEvent->getKeyCode() == KeyCode::Return) {
-        publishEvent("click", EventType::MouseRelease);
-        if (onClick_) onClick_();
-        return true;
+    std::string UIButton::getText() const {
+        return label_ ? label_->getText() : "";
     }
-    return false;
-}
 
-bool UIButton::handleInput(ITextInputEvent* textEvent) {
-    return UIElement::handleInput(textEvent); // No text input for buttons
-}
+    void UIButton::setIcon(const std::shared_ptr<ITexture>& icon) {
+        icon_ = icon;
+        markDirty();
+    }
+
+    void UIButton::render(IRenderer* renderer) {
+        if (!renderer || !isDirty()) return;
+
+        // Draw the background.
+        drawBackground(renderer);
+
+        const UITheme* theme = nullptr;
+        if (auto* canvas = dynamic_cast<UICanvas*>(parent_.value_or(nullptr))) {
+            theme = canvas->getEffectiveTheme();
+        }
+        if (!theme) return;
+
+        UIStyle style = *theme->getStyle(styleType_).get();
+        std::unordered_map<std::string, bool> states = { {"hovered", isHovered_}, {"pressed", isPressed_} };
+        UIStyle effectiveStyle = style.computeEffectiveStyle(states);
+
+        if (icon_ && getText().empty()) {
+            glm::vec2 iconSize = { static_cast<float>(icon_->getWidth()), static_cast<float>(icon_->getHeight()) };
+            glm::vec2 iconPos = position_ + (size_ - iconSize) * 0.5f;
+            renderer->drawTexture(iconPos, iconSize, icon_.get());
+        }
+        else if (icon_ && !getText().empty()) {
+            glm::vec2 iconSize = { static_cast<float>(icon_->getWidth()), static_cast<float>(icon_->getHeight()) };
+            float padding = 5.0f;
+            glm::vec2 iconPos = position_ + glm::vec2(padding, (size_.y - iconSize.y) * 0.5f);
+            renderer->drawTexture(iconPos, iconSize, icon_.get());
+            glm::vec2 labelPos = position_ + glm::vec2(iconSize.x + 2 * padding, (size_.y - label_->getSize().y) * 0.5f);
+            label_->setPosition(labelPos);
+            label_->render(renderer);
+        }
+        else {
+            glm::vec2 textSize = renderer->measureText(getText(), style.fontSize);
+            glm::vec2 labelPos = position_ + (size_ - textSize) * 0.5f;
+            if (label_) {
+                label_->setPosition(labelPos);
+                label_->render(renderer);
+            }
+        }
+        markDirty();
+    }
+
+    bool UIButton::handleInput(IMouseEvent* mouseEvent) {
+        if (!mouseEvent) return false;
+        bool handled = UIElement::handleInput(mouseEvent);
+        return handled;
+    }
+
+    bool UIButton::handleInput(IKeyboardEvent* keyboardEvent) {
+        if (!keyboardEvent) return false;
+        if (keyboardEvent->getType() == EventType::KeyPress && keyboardEvent->getKeyCode() == KeyCode::Return) {
+            publishEvent("click", EventType::MouseRelease);
+            if (onClick_) onClick_();
+            return true;
+        }
+        return UIElement::handleInput(keyboardEvent);
+    }
+
+    void UIButton::onStyleUpdate() {
+        if (label_) {
+            label_->onStyleUpdate();
+        }
+        markDirty();
+    }
 
 } // namespace ui
